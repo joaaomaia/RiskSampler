@@ -38,4 +38,4 @@ E   ModuleNotFoundError: No module named 'risk_sampler'
 =========================== short test summary info ===========================
 ERROR tests/unit/test_risksampler.py
 !!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
-========================= 1 warning, 1 error in 2.77s =========================
+========================= 1 warning, 1 error in 0.72s =========================

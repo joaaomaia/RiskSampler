@@ -1,23 +1,22 @@
-"""RiskSampler package shim
-==========================
-Temporary adapter while the code base is migrated from the former
-package name *sample_weighter* → *risk_sampler*.
-
-This module re-exports `RiskSampler` and wires an alias so that
-`import risk_sampler.core` resolves to `sample_weighter.core`.
+"""risk_sampler package
+=====================
+Exports the :class:`RiskSampler <risk_sampler.core.RiskSampler>` class and
+ensures that imports such as ``from risk_sampler.core import RiskSampler``
+work in *src-layout* projects **without** requiring an editable install.
 """
 
 from importlib import import_module
-import sys
 from types import ModuleType
+import sys
 
-# Import the original implementation
-_sample_core: ModuleType = import_module("sample_weighter.core")
+# Public re-export -----------------------------------------------------------
+from .core import RiskSampler  # noqa: F401
 
-# Expose the class at top level
-RiskSampler = _sample_core.RiskSampler
-__all__ = ["RiskSampler"]
+__all__: list[str] = ["RiskSampler"]
 
-# Make `risk_sampler.core` an alias of the original module, so that
-# `from risk_sampler.core import RiskSampler` keeps working.
-sys.modules.setdefault("risk_sampler.core", _sample_core)
+# ---------------------------------------------------------------------------
+# Add alias `risk_sampler.core` -> actual module object, so that libraries
+# that expect the sub-module path import correctly.
+# ---------------------------------------------------------------------------
+_core: ModuleType = import_module("risk_sampler.core")
+sys.modules.setdefault("risk_sampler.core", _core)
