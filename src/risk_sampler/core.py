@@ -24,7 +24,10 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 import pandas as pd
 
-__all__ = ['RiskSampler']
+from . import strategies
+
+__all__ = ["RiskSampler"]
+
 
 class RiskSampler:
     """Compute *sample_weight* vectors for behavioural PD models.
@@ -62,14 +65,7 @@ class RiskSampler:
         0 – silent; 1 – info; 2 – debug.
     """
 
-    _ALLOWED = {
-        "balanced",
-        "equal_vintage",
-        "stabilise_er",
-        "recency_decay",
-        "expected_loss",
-        "combo",
-    }
+    _ALLOWED = set(strategies.all_strategies().keys()) | {"combo"}
 
     def __init__(
         self,
@@ -99,7 +95,7 @@ class RiskSampler:
     # --------------------------------------------------------------------- #
     # Public API                                                             #
     # --------------------------------------------------------------------- #
-    def fit(self, df: pd.DataFrame) -> "SampleWeighter":
+    def fit(self, df: pd.DataFrame) -> "RiskSampler":
         """Compute dataset‑level statistics required by some strategies."""
         df = df.copy()
         df["_vintage"] = self._to_period(df[self.date_col])
@@ -148,11 +144,14 @@ class RiskSampler:
 
         for strat in order:
             if strat == "combo":
-                continue  # skip meta‑strategy
+                continue  # skip meta-strategy
             if strat not in self._ALLOWED:
-                raise ValueError(f"Unknown strategy '{strat}'. Allowed: {self._ALLOWED}")
-            method = getattr(self, f"_weights_{strat}")
-            w_part = method(df)
+                raise ValueError(
+                    f"Unknown strategy '{strat}'. Allowed: {self._ALLOWED}"
+                )
+            func = strategies.get(strat)
+            cfg = self.strategies.get(strat, {})
+            w_part = func(df, self.summary_, cfg, self.date_col, self.target_col)
             weights *= w_part
             if self.verbose >= 2:
                 print(f"  · {strat:15s} → mean={w_part.mean():.4f}")
@@ -169,55 +168,6 @@ class RiskSampler:
     def fit_transform(self, df: pd.DataFrame) -> pd.Series:  # noqa: D401
         """Shortcut for *fit* followed by *transform*."""
         return self.fit(df).transform(df)
-
-    # --------------------------------------------------------------------- #
-    # Strategy implementations                                               #
-    # --------------------------------------------------------------------- #
-    def _weights_balanced(self, df: pd.DataFrame) -> np.ndarray:
-        p = self.summary_["global_er"]
-        y = df[self.target_col].to_numpy()
-        return np.where(y == 1, 0.5 / p, 0.5 / (1.0 - p))
-
-    def _weights_equal_vintage(self, df: pd.DataFrame) -> np.ndarray:
-        sizes = self.summary_["vintage_sizes"]
-        k = len(sizes)
-        n_tot = self.summary_["n_obs"]
-        factor = {v: n_tot / (k * n) for v, n in sizes.items()}
-        return df["_vintage"].map(factor).to_numpy()
-
-    def _weights_stabilise_er(self, df: pd.DataFrame) -> np.ndarray:
-        cfg = self.strategies.get("stabilise_er", {})
-        target_er = cfg.get("target_er", self.summary_["global_er"])
-        er = self.summary_["vintage_er"]
-        mapping_pos = {v: target_er / er_v for v, er_v in er.items()}
-        mapping_neg = {
-            v: (1.0 - target_er) / max(1e-12, 1.0 - er_v) for v, er_v in er.items()
-        }
-        vint = df["_vintage"]
-        y = df[self.target_col]
-        return np.where(
-            y == 1, vint.map(mapping_pos).to_numpy(), vint.map(mapping_neg).to_numpy()
-        )
-
-    def _weights_recency_decay(self, df: pd.DataFrame) -> np.ndarray:
-        lam = self.summary_["recency_lambda"]
-        max_vint = max(self.summary_["vintage_sizes"].keys())
-        delta = (max_vint - df["_vintage"]).astype(int)
-        return np.exp(-lam * delta)
-
-    def _weights_expected_loss(self, df: pd.DataFrame) -> np.ndarray:
-        cfg = self.strategies.get("expected_loss", {})
-        lgd_col = cfg.get("lgd_col")
-        ead_col = cfg.get("ead_col")
-        if ead_col is None:
-            raise ValueError("expected_loss requires 'ead_col'.")
-        w = df[ead_col].astype(float)
-        if lgd_col:
-            w = w * df[lgd_col].astype(float)
-        # optional scaling
-        if cfg.get("scale_to_mean", True):
-            w = w / w.mean()
-        return w.to_numpy()
 
     # --------------------------------------------------------------------- #
     # Utilities                                                              #
