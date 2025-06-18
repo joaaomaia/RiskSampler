@@ -20,5 +20,5 @@ def weights(
 ) -> np.ndarray:
     lam = summary["recency_lambda"]
     max_vint = max(summary["vintage_sizes"].keys())
-    delta = max_vint.ordinal - df["_vintage"].astype(int)
+    delta = max_vint.ordinal - df["_vintage"].map(lambda p: p.ordinal)
     return np.exp(-lam * delta)
