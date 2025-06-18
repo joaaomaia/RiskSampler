@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import pandas as pd
 import pytest
@@ -20,6 +21,7 @@ def df_simple():
 # Balanced strategy                                                     #
 # --------------------------------------------------------------------- #
 
+
 def test_balanced_weights(df_simple):
     rs = RiskSampler(date_col="vint", target_col="bad", strategies={"balanced": {}})
     w = rs.fit_transform(df_simple)
@@ -35,8 +37,11 @@ def test_balanced_weights(df_simple):
 # Equal‑vintage strategy                                                #
 # --------------------------------------------------------------------- #
 
+
 def test_equal_vintage(df_simple):
-    rs = RiskSampler(date_col="vint", target_col="bad", strategies={"equal_vintage": {}})
+    rs = RiskSampler(
+        date_col="vint", target_col="bad", strategies={"equal_vintage": {}}
+    )
     w = rs.fit_transform(df_simple)
     # Factors should be 0.7143 and 1.6667 as per docstring
     factors = set(np.round(w.unique(), 4))
@@ -48,18 +53,21 @@ def test_equal_vintage(df_simple):
 # Combo strategy (sanity)                                               #
 # --------------------------------------------------------------------- #
 
+
 def test_combo_positive(df_simple):
     strategies = {
         "balanced": {},
         "equal_vintage": {},
         "stabilise_er": {"target_er": 0.18},
         "recency_decay": {"half_life": 6},
-        "combo": {"order": [
-            "balanced",
-            "equal_vintage",
-            "stabilise_er",
-            "recency_decay",
-        ]},
+        "combo": {
+            "order": [
+                "balanced",
+                "equal_vintage",
+                "stabilise_er",
+                "recency_decay",
+            ]
+        },
     }
     rs = RiskSampler(date_col="vint", target_col="bad", strategies=strategies)
     w = rs.fit_transform(df_simple)
@@ -71,6 +79,7 @@ def test_combo_positive(df_simple):
 # --------------------------------------------------------------------- #
 # Expected‑loss strategy                                                #
 # --------------------------------------------------------------------- #
+
 
 def test_expected_loss():
     df = pd.DataFrame(
@@ -87,6 +96,7 @@ def test_expected_loss():
         strategies={
             "expected_loss": {"ead_col": "ead", "lgd_col": "lgd", "scale_to_mean": True}
         },
+        cap=None,
     )
     w = rs.fit_transform(df)
     # After scaling to mean 1, mean exactly 1
@@ -101,13 +111,51 @@ def test_expected_loss():
 # Cap functionality                                                     #
 # --------------------------------------------------------------------- #
 
+
 def test_cap_quantile(df_simple):
     rs = RiskSampler(
         date_col="vint",
         target_col="bad",
         strategies={"balanced": {}},
         cap=0.50,  # 50th percentile cap
+        normalise=False,
     )
     w = rs.fit_transform(df_simple)
     # Max should be <= median of uncapped weights (which is 0.625)
     assert w.max() <= 0.625
+
+
+def test_recency_decay_half_life(df_simple):
+    rs = RiskSampler(
+        date_col="vint",
+        target_col="bad",
+        strategies={"recency_decay": {"half_life": 1}},
+    )
+    w = rs.fit_transform(df_simple)
+    vint_means = w.groupby(df_simple["vint"]).mean()
+    ratio = vint_means.loc[202401] / vint_means.loc[202402]
+    assert pytest.approx(ratio, rel=1e-12) == 0.5
+
+
+def test_recency_decay_lambda(df_simple):
+    rs = RiskSampler(
+        date_col="vint",
+        target_col="bad",
+        strategies={"recency_decay": {"lambda_": math.log(2)}},
+    )
+    w = rs.fit_transform(df_simple)
+    vint_means = w.groupby(df_simple["vint"]).mean()
+    ratio = vint_means.loc[202401] / vint_means.loc[202402]
+    assert pytest.approx(ratio, rel=1e-12) == 0.5
+
+
+def test_stratified_bootstrap(df_simple):
+    rs = RiskSampler(
+        date_col="vint",
+        target_col="bad",
+        strategies={"stratified_bootstrap": {"random_state": 42}},
+    )
+    w = rs.fit_transform(df_simple)
+    assert pytest.approx(w.mean(), rel=1e-12) == 1.0
+    uniq = set(np.round(w.unique(), 3))
+    assert 0.0 in uniq and len(uniq) == 3
