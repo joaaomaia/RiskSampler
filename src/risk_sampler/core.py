@@ -169,12 +169,38 @@ class RiskSampler:
         """Shortcut for *fit* followed by *transform*."""
         return self.fit(df).transform(df)
 
+    def audit_report(self, weights: pd.Series) -> dict[str, Any]:
+        """Return basic JSON audit information for *weights*.
+
+        Parameters
+        ----------
+        weights : pd.Series
+            Weights produced by :meth:`transform`.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary with mean weight, KS-test p-value against an
+            all-ones baseline and the applied cap quantile.
+        """
+        from scipy.stats import ks_2samp
+
+        w = weights.to_numpy()
+        p_value = ks_2samp(w, np.ones_like(w), alternative="two-sided").pvalue
+        return {
+            "mean": float(w.mean()),
+            "ks_pvalue": float(p_value),
+            "cap": None if self.cap is None else float(self.cap),
+        }
+
     # --------------------------------------------------------------------- #
     # Utilities                                                              #
     # --------------------------------------------------------------------- #
     @staticmethod
     def _to_period(s: pd.Series) -> pd.Series:
-        """Convert various date formats to pandas.Period["M"]."""
+        """Convert various date formats to ``pandas.Period['M']``."""
+        if isinstance(s.dtype, pd.PeriodDtype):
+            return s
         if np.issubdtype(s.dtype, np.datetime64):
             return s.dt.to_period("M")
         if np.issubdtype(s.dtype, np.integer):

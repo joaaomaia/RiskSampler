@@ -1,6 +1,6 @@
 
 [project]
-name = "sample_weighter"
+name = "risk_sampler"
 version = "0.1.0"
 description = "Sample weight toolkit for PD-Behavior models"
 authors = [{name = "Seu Nome", email = "voce@exemplo.com"}]

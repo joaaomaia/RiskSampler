@@ -12,4 +12,6 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT / "src"
 
 if SRC_DIR.exists():
-    sys.path.insert(0, str(SRC_DIR))
+    path = str(SRC_DIR)
+    if path not in sys.path:
+        sys.path.insert(0, path)
