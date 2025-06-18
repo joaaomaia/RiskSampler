@@ -1,0 +1,11 @@
+
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.venv/
+.env/
+data/raw/*
+data/processed/*
+experiments/
+
+create_project.py

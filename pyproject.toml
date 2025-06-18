@@ -1,0 +1,17 @@
+
+[project]
+name = "sample_weighter"
+version = "0.1.0"
+description = "Sample weight toolkit for PD-Behavior models"
+authors = [{name = "Seu Nome", email = "voce@exemplo.com"}]
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "pyyaml",
+]
+
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
