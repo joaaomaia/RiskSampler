@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from typing import Dict, Iterable, Tuple
+
 import pandas as pd
-from typing import Dict, Tuple, Iterable, List
+from tqdm.auto import tqdm
 
 class TargetBuilder:
     """
@@ -32,6 +34,8 @@ class TargetBuilder:
         Dict opcional no formato
         {"NOME_TARGET": ("ever|over", limiar_dpd:int, janela:int)}.
         Se None, usa o conjunto-padrão abaixo.
+    progress : bool, default False
+        Se True, exibe barras de progresso com ``tqdm`` durante o cálculo.
     """
 
     _DEFAULT_MAP: Dict[str, Tuple[str, int, int]] = {
@@ -50,13 +54,15 @@ class TargetBuilder:
         dpd_col: str = "dpd",
         freq: str = "M",
         mapping: Dict[str, Tuple[str, int, int]] | None = None,
-        targets: Iterable[str] | None = None,          # ← NOVO
+        targets: Iterable[str] | None = None,
+        progress: bool = False,
     ):
         self.id_col   = id_col
         self.date_col = date_col
         self.dpd_col  = dpd_col
         self.freq     = freq
         self.mapping  = mapping or TargetBuilder._DEFAULT_MAP
+        self.progress = progress
 
         # filtra mapping pelo subconjunto solicitado, se houver
         if targets is not None:
@@ -92,13 +98,17 @@ class TargetBuilder:
 
         # Pré-cria flags para cada limiar necessário
         thresholds = {thr for _, thr, _ in self.mapping.values()}
-        for thr in thresholds:
+        for thr in tqdm(
+            sorted(thresholds), desc="thresholds", disable=not self.progress
+        ):
             flag = f"__dpd_ge_{thr}"
             if flag not in df.columns:
                 df[flag] = (df[self.dpd_col] >= thr).astype("int8")
 
         # Calcula targets por contrato
-        for tgt, (kind, thr, horizon) in self.mapping.items():
+        for tgt, (kind, thr, horizon) in tqdm(
+            self.mapping.items(), desc="targets", disable=not self.progress
+        ):
             flag = f"__dpd_ge_{thr}"
 
             if kind == "ever":          # look-ahead

@@ -11,6 +11,7 @@ dependencies = [
     "pyyaml",
     "bottleneck>=1.3.6",
     "ipykernel",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
