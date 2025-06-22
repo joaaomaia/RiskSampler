@@ -9,3 +9,6 @@ data/processed/*
 experiments/
 
 create_project.py
+.bash_profile
+
+risk_sampler.egg-info/
