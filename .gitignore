@@ -13,3 +13,6 @@ create_project.py
 
 risk_sampler.egg-info/
 dataset-metadata.json
+
+.github/worflows/ci.yaml
+.github/worflows/docs.yaml

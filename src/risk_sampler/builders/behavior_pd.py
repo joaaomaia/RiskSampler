@@ -1,5 +1,13 @@
+from __future__ import annotations
+import sys
 import pandas as pd
 import numpy as np
+
+try:
+    from tqdm import tqdm
+except ImportError:          # fallback ultra-compatível
+    def tqdm(iterable=None, *args, **kwargs):
+        return iterable if iterable is not None else range(0)
 
 
 class BehaviorPDBuilder:
@@ -41,7 +49,11 @@ class BehaviorPDBuilder:
     # ------------------------------------------------------------------ #
     # MÉTODO PÚBLICO
     # ------------------------------------------------------------------ #
-    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+    def transform(
+        self,
+        df: pd.DataFrame,
+        show_progress: bool = True,
+        ) -> pd.DataFrame:
         """
         Retorna o DataFrame filtrado + colunas auxiliares de spell.
 
@@ -59,20 +71,27 @@ class BehaviorPDBuilder:
         df = self._prep_time(df)
         df["performing"] = df[self.default_col] == 0
 
-        # Agrupa por contrato e aplica a lógica de spells
-        df = (
-            df.sort_values([self.id_col, "_ref"])
-              .groupby(self.id_col, group_keys=False)
-              .apply(self._assign_spells, include_groups=False)  # pandas 2.2+
-        )
+        # -------------------------------------------------------------- #
+        # 1) Agrupamento contrato-a-contrato com barra de progresso      #
+        # -------------------------------------------------------------- #
+        df_sorted = df.sort_values([self.id_col, "_ref"])
+        grp = df_sorted.groupby(self.id_col, sort=False)
 
-        # Mantém apenas meses performing aceitos
+        # tqdm só se show_progress=True *e* tqdm importado com sucesso
+        wrapper = tqdm if (show_progress and "tqdm" in sys.modules) else (lambda x, **k: x)
+
+        acc = []
+        for _, g in wrapper(grp, total=len(grp), desc="Processando contratos"):
+            acc.append(self._assign_spells(g))
+
+        df = pd.concat(acc, ignore_index=True)
+
+        # -------------------------------------------------------------- #
+        # 2) Demais etapas (iguais às suas)                              #
+        # -------------------------------------------------------------- #
         df = df[df["keep"]].drop(columns=["keep", "performing", "_ref"])
-
-        # Ordenação dentro do spell
         df["months_elapsed"] = df.groupby("spell_id").cumcount()
 
-        # Flag de censura
         default_flag = (
             df.groupby("spell_id")[self.default_col]
               .max()
@@ -82,7 +101,6 @@ class BehaviorPDBuilder:
         df["censored"] = (df["default_happened"] == 0).astype(int)
         df = df.drop(columns="default_happened")
 
-        # Ordem final de colunas
         front = [
             self.id_col,
             "spell_id",

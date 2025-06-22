@@ -1,41 +1,17 @@
 from __future__ import annotations
 
+import re
 from typing import Dict, Iterable, Tuple
-
 import pandas as pd
 from tqdm.auto import tqdm
 
+
 class TargetBuilder:
     """
-    Constrói targets binários do tipo `EVERxxMhh` e `OVERxxMhh`.
+    Constrói targets `EVER/OVER-<dpd><U><h>` onde:
+        U ∈ {M=meses, Q=trimestres, Y=anos, D=dias}
 
-    Definições
-    ----------
-    EVER : se o contrato atinge ou ultrapassa o limiar de DPD em
-           QUALQUER mês dentro da janela *futura* de `horizon` meses.
-    OVER : se o contrato esteve acima do limiar de DPD em
-           QUALQUER mês na janela *passada* de `horizon` meses
-           (incluindo o mês corrente).
-
-    Exemplo:
-        EVER90M12 = 1 se, em algum dos próximos 12 meses,
-                     `dpd >= 90`.
-        OVER30M4  = 1 se, em algum dos últimos 4 meses (corrente
-                     incluído), `dpd >= 30`.
-
-    Parameters
-    ----------
-    id_col   : str
-    date_col : str
-    dpd_col  : str, default "dpd"
-        Coluna numérica com dias-em-atraso (DPD) ou flag binária.
-    freq     : {"M","D",...}, default "M"
-    mapping  : dict | None
-        Dict opcional no formato
-        {"NOME_TARGET": ("ever|over", limiar_dpd:int, janela:int)}.
-        Se None, usa o conjunto-padrão abaixo.
-    progress : bool, default False
-        Se True, exibe barras de progresso com ``tqdm`` durante o cálculo.
+    Ex.: EVER30Q8 → dpd≥30 em qualquer dos próximos 8 trimestres
     """
 
     _DEFAULT_MAP: Dict[str, Tuple[str, int, int]] = {
@@ -47,6 +23,12 @@ class TargetBuilder:
         "OVER90M12": ("over", 90, 12),
     }
 
+    _UNIT2MONTH = {"M": 1, "Q": 3, "Y": 12, "D": 1}
+    _FREQ2MONTH = {"M": 1, "Q": 3, "Y": 12, "D": 1}
+
+    # ------------------------------------------------------------------ #
+    # Init
+    # ------------------------------------------------------------------ #
     def __init__(
         self,
         id_col: str,
@@ -57,69 +39,111 @@ class TargetBuilder:
         targets: Iterable[str] | None = None,
         progress: bool = False,
     ):
-        self.id_col   = id_col
+        self.id_col = id_col
         self.date_col = date_col
-        self.dpd_col  = dpd_col
-        self.freq     = freq
-        self.mapping  = mapping or TargetBuilder._DEFAULT_MAP
+        self.dpd_col = dpd_col
+        self.freq = freq.upper()
+        if self.freq not in self._FREQ2MONTH:
+            raise ValueError(f"freq inválido: {freq!r}. Use M, Q, Y ou D.")
         self.progress = progress
 
-        # filtra mapping pelo subconjunto solicitado, se houver
+        # 1) ponto de partida
+        self.mapping: Dict[str, Tuple[str, int, int]] = (
+            mapping.copy() if mapping is not None else self._DEFAULT_MAP.copy()
+        )
+
+        # 2) se o usuário listou targets explícitos…
         if targets is not None:
-            missing = set(targets) - self.mapping.keys()
-            if missing:
-                raise ValueError(
-                    f"Targets desconhecidos: {sorted(missing)}. "
-                    f"Disponíveis: {sorted(self.mapping)}"
-                )
+            for tgt in targets:
+                if tgt not in self.mapping:
+                    # parse e adiciona
+                    self.mapping[tgt] = self._parse_target_name(tgt)
+            # mantém só os solicitados
             self.mapping = {k: v for k, v in self.mapping.items() if k in targets}
-    # --------------------------------------------------------------------- #
+
+        # 3) sanity-check
+        if not self.mapping:
+            raise ValueError("Nenhum target solicitado/mapeado.")
+
+    # ------------------------------------------------------------------ #
     # Helpers
-    # --------------------------------------------------------------------- #
+    # ------------------------------------------------------------------ #
+    _PAT = re.compile(r"^(EVER|OVER)(\d+)([MDQY])(\d+)$", re.I)
+
+    def _parse_target_name(self, name: str) -> Tuple[str, int, int]:
+        """
+        Converte 'EVER30Q8' → ('ever', 30, 24)  (24 = 8×3 meses)
+        Depois ajusta para a frequência base (`freq`).
+        """
+        m = self._PAT.match(name)
+        if not m:
+            raise ValueError(
+                f"Nome de target inválido: {name!r}. "
+                "Use EVER/OVER + <dias> + M/Q/Y/D + <horizonte>."
+            )
+        kind, thr, unit, h = m.groups()
+        kind = kind.lower()
+        thr = int(thr)
+        h = int(h)
+        unit = unit.upper()
+
+        # converte tudo para 'meses'
+        unit_months = self._UNIT2MONTH[unit]
+        horizon_months = h * unit_months
+
+        # converte para nº de períodos na freq base
+        base_months = self._FREQ2MONTH[self.freq]
+        if horizon_months % base_months != 0:
+            raise ValueError(
+                f"Horizonte de {name} ({horizon_months} meses) "
+                f"não é múltiplo da frequência base {self.freq}."
+            )
+        horizon_periods = horizon_months // base_months
+        return kind, thr, horizon_periods
+
     def _prep_dates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Converte date_col para datetime64[ns] consistente."""
+        """Converte `date_col` em datetime64[ns] e ordena."""
         df = df.copy()
         s = df[self.date_col]
 
         if pd.api.types.is_integer_dtype(s):
-            # assume formato yyyymm
-            df[self.date_col] = pd.to_datetime(s.astype(str).str.zfill(6), format="%Y%m")
+            df[self.date_col] = pd.to_datetime(
+                s.astype(str).str.zfill(6), format="%Y%m"
+            )
         else:
             df[self.date_col] = pd.to_datetime(s)
 
         return df.sort_values([self.id_col, self.date_col])
 
-    # --------------------------------------------------------------------- #
+    # ------------------------------------------------------------------ #
     # Público
-    # --------------------------------------------------------------------- #
+    # ------------------------------------------------------------------ #
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Devolve cópia de *df* com as colunas-target solicitadas."""
+        """Retorna *df* com as colunas-target solicitadas."""
         df = self._prep_dates(df)
 
-        # Pré-cria flags para cada limiar necessário
+        # Flags auxiliares dpd≥limiar
         thresholds = {thr for _, thr, _ in self.mapping.values()}
-        for thr in tqdm(
-            sorted(thresholds), desc="thresholds", disable=not self.progress
-        ):
+        for thr in tqdm(thresholds, desc="thresholds", disable=not self.progress):
             flag = f"__dpd_ge_{thr}"
             if flag not in df.columns:
                 df[flag] = (df[self.dpd_col] >= thr).astype("int8")
 
-        # Calcula targets por contrato
+        # Calcula cada target
         for tgt, (kind, thr, horizon) in tqdm(
             self.mapping.items(), desc="targets", disable=not self.progress
         ):
             flag = f"__dpd_ge_{thr}"
 
-            if kind == "ever":          # look-ahead
+            if kind == "ever":  # look-ahead
                 df[tgt] = (
                     df.groupby(self.id_col, group_keys=False)[flag]
-                      .transform(lambda s: s[::-1].rolling(horizon, 1).max()[::-1])
+                    .transform(lambda s: s[::-1].rolling(horizon, 1).max()[::-1])
                 )
-            elif kind == "over":        # look-back
+            elif kind == "over":  # look-back
                 df[tgt] = (
                     df.groupby(self.id_col, group_keys=False)[flag]
-                      .transform(lambda s: s.rolling(horizon, 1).max())
+                    .transform(lambda s: s.rolling(horizon, 1).max())
                 )
             else:
                 raise ValueError(f"Tipo desconhecido: {kind!r}")
@@ -127,6 +151,5 @@ class TargetBuilder:
             df[tgt] = df[tgt].astype("int8")
 
         # remove helpers
-        df.drop(columns=[c for c in df.columns if c.startswith("__dpd_ge_")],
-                inplace=True)
+        df.drop(columns=[c for c in df.columns if c.startswith("__dpd_ge_")], inplace=True)
         return df
