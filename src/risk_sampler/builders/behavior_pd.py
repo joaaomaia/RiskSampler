@@ -42,35 +42,47 @@ class BehaviorPDBuilder:
     # MÉTODO PÚBLICO
     # ------------------------------------------------------------------ #
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Retorna DataFrame filtrado + colunas auxiliares de spell."""
+        """
+        Retorna o DataFrame filtrado + colunas auxiliares de spell.
+
+        Várias etapas:
+        1. Converte ref_col para pandas Period → coluna interna “_ref”.
+        2. Marca linhas performing.
+        3. Assina spells por contrato (agrupamento + _assign_spells).
+           • include_groups=False silencia o FutureWarning em pandas ≥2.2.
+        4. Mantém apenas meses performing já “curados”.
+        5. Cria months_elapsed dentro do spell.
+        6. Calcula flag censored (1 = nenhum default no spell).
+        7. Reorganiza colunas e reinicia índice.
+        """
         df = df.copy()
         df = self._prep_time(df)
         df["performing"] = df[self.default_col] == 0
 
-        # Assina spells dentro de cada id --------------------------------
+        # Agrupa por contrato e aplica a lógica de spells
         df = (
             df.sort_values([self.id_col, "_ref"])
               .groupby(self.id_col, group_keys=False)
-              .apply(self._assign_spells)
+              .apply(self._assign_spells, include_groups=False)  # pandas 2.2+
         )
 
-        # Mantém somente meses performing + já curados -------------------
+        # Mantém apenas meses performing aceitos
         df = df[df["keep"]].drop(columns=["keep", "performing", "_ref"])
 
-        # Colunas de ordenação dentro do spell
+        # Ordenação dentro do spell
         df["months_elapsed"] = df.groupby("spell_id").cumcount()
 
-        # Flag de censura (1=censurado, 0=houve default no spell)
-        end_info = (
+        # Flag de censura
+        default_flag = (
             df.groupby("spell_id")[self.default_col]
               .max()
               .rename("default_happened")
         )
-        df = df.merge(end_info, left_on="spell_id", right_index=True)
+        df = df.merge(default_flag, left_on="spell_id", right_index=True)
         df["censored"] = (df["default_happened"] == 0).astype(int)
         df = df.drop(columns="default_happened")
 
-        # Organização final de colunas
+        # Ordem final de colunas
         front = [
             self.id_col,
             "spell_id",
@@ -80,8 +92,10 @@ class BehaviorPDBuilder:
         ]
         if self.target_col:
             front.append(self.target_col)
+
         ordered = front + [c for c in df.columns if c not in front]
         return df[ordered].reset_index(drop=True)
+
 
     # ------------------------------------------------------------------ #
     # MÉTODOS PRIVADOS
@@ -98,12 +112,22 @@ class BehaviorPDBuilder:
         return df
 
     def _assign_spells(self, g: pd.DataFrame) -> pd.DataFrame:
-        """Dentro de um contrato, numera spells e decide quais linhas manter."""
-        # 1) transição performing False→True cria novo spell
+        """
+        Dentro de um contrato, numera spells e decide quais linhas manter.
+
+        Observação:
+        Se `include_groups=False` (pandas ≥2.2) remover a coluna de agrupamento,
+        recriamos `self.id_col` a partir de `g.name`.
+        """
+        # Garante a presença da coluna id_col (para compatibilidade futura)
+        if self.id_col not in g.columns:
+            g[self.id_col] = g.name
+
+        # 1) Início de spell = transição False→True em performing
         start = (~g["performing"].shift(fill_value=False) & g["performing"]).cumsum()
         g["spell_seq"] = np.where(g["performing"], start, np.nan)
 
-        # 2) aplica regra de cura
+        # 2) Regra de cura
         if self.cure_gap > 0:
             consec_perf = (
                 g["performing"]
@@ -111,16 +135,21 @@ class BehaviorPDBuilder:
                   .cumcount() + 1
             )
             not_cured = (
-                g["performing"] &
-                (consec_perf < self.cure_gap) &
-                (g[self.default_col].shift(fill_value=0) == 1)
+                g["performing"]
+                & (consec_perf < self.cure_gap)
+                & (g[self.default_col].shift(fill_value=0) == 1)
             )
             g.loc[not_cured, "spell_seq"] = np.nan
 
-        # 3) decide se a linha fica no dataset final
+        # 3) Decide linhas a manter
         g["keep"] = g["performing"] & g["spell_seq"].notna()
         g.loc[g["keep"], "spell_seq"] = g.loc[g["keep"], "spell_seq"].astype(int)
+
+        # 4) Cria identificador único do spell
         g["spell_id"] = (
-            g[self.id_col].astype(str) + "_" + g["spell_seq"].fillna(0).astype(int).astype(str)
+            g[self.id_col].astype(str)
+            + "_"
+            + g["spell_seq"].fillna(0).astype(int).astype(str)
         )
+
         return g
