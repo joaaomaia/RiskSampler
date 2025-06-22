@@ -1,6 +1,6 @@
 # RiskSampler
 
-Ferramentas de amostragem e preparacão de dados para modelos de PD Behavior.
+Ferramentas de amostragem e preparacão de dados para modelos de PD.
 
 ## Exemplos de Uso
 
