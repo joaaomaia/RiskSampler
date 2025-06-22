@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Iterable, List
 
 class TargetBuilder:
     """
@@ -50,13 +50,23 @@ class TargetBuilder:
         dpd_col: str = "dpd",
         freq: str = "M",
         mapping: Dict[str, Tuple[str, int, int]] | None = None,
+        targets: Iterable[str] | None = None,          # ← NOVO
     ):
-        self.id_col = id_col
+        self.id_col   = id_col
         self.date_col = date_col
-        self.dpd_col = dpd_col
-        self.freq = freq
-        self.mapping = mapping or TargetBuilder._DEFAULT_MAP
+        self.dpd_col  = dpd_col
+        self.freq     = freq
+        self.mapping  = mapping or TargetBuilder._DEFAULT_MAP
 
+        # filtra mapping pelo subconjunto solicitado, se houver
+        if targets is not None:
+            missing = set(targets) - self.mapping.keys()
+            if missing:
+                raise ValueError(
+                    f"Targets desconhecidos: {sorted(missing)}. "
+                    f"Disponíveis: {sorted(self.mapping)}"
+                )
+            self.mapping = {k: v for k, v in self.mapping.items() if k in targets}
     # --------------------------------------------------------------------- #
     # Helpers
     # --------------------------------------------------------------------- #
